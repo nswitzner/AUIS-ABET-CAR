@@ -1,0 +1,474 @@
+library(shiny)
+library(dplyr)
+
+# Define ABET SLOs with descriptions
+abet_slos <- list(
+  "1. Ability to identify, formulate, and solve complex engineering problems" = "Students can identify, formulate, and solve complex engineering problems by applying principles of engineering, science, and mathematics.",
+  "2. Ability to apply engineering design to produce solutions that meet specified needs" = "Students can apply engineering design to produce solutions that meet specified needs with consideration of public health, safety, and welfare, as well as global, cultural, social, environmental, and economic factors.",
+  "3. Ability to communicate effectively with a range of audiences" = "Students can communicate effectively with a range of audiences.",
+  "4. Ability to recognize ethical and professional responsibilities" = "Students can recognize ethical and professional responsibilities in engineering situations and make informed judgments, which must consider the impact of engineering solutions in global, economic, environmental, and societal contexts.",
+  "5. Ability to function effectively on a team" = "Students can function effectively on a team whose members together provide leadership, create a collaborative and inclusive environment, establish goals, plan tasks, and meet objectives.",
+  "6. Ability to develop and conduct appropriate experimentation" = "Students can develop and conduct appropriate experimentation, analyze and interpret data, and use engineering judgment to draw conclusions.",
+  "7. Ability to acquire and apply new knowledge as needed" = "Students can acquire and apply new knowledge as needed, using appropriate learning strategies."
+)
+
+# Define course codes
+course_codes <- c(
+  "ENGR 210", "ENGR 230", "ENGR 231", "ENGR 244", "ENGR 248",
+  "ENGR 313", "ENGR 320", "ENGR 344", "ENGR 348", "ENGR 352",
+  "ENGR 354", "ENGR 356", "ENGR 358", "ENGR 370", "ENGR 373",
+  "ENGR 390", "ENGR 413", "ENGR 420", "ENGR 425", "ENGR 430",
+  "ENGR 432", "ENGR 433", "ENGR 444", "ENGR 452", "ENGR 453",
+  "ENGR 454", "ENGR 455", "ENGR 457", "ENGR 461", "ENGR 473",
+  "ENGR 474", "ENGR 475", "ENGR 476", "ENGR 477", "ENGR 484",
+  "ENGR 489", "ENGR 490", "ENGR 491", "ENGR 492", "ENGR 493"
+)
+
+# Define UI for the app (modified)
+ui <- fluidPage(
+  titlePanel("Course Assessment Report"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      width = 4,
+      
+      # Dropdown for selecting course code
+      selectInput("course_code", "Select Course Code:", choices = course_codes),
+      
+      # Dropdown for selecting ABET SLOs
+      selectInput("slo", "Select ABET SLO:", choices = names(abet_slos)),
+      
+      # Text area for entering CLOs
+      textAreaInput("clo", "Enter Course Learning Objective (CLO):", "", rows = 3, placeholder = "Enter the CLO here."),
+      
+      # Button to add CLO
+      actionButton("add_clo", "Add CLO"),
+      
+      hr(),
+      
+      # Student grades input by copy-pasting a table
+      textAreaInput("grades_input", "Enter Grades Data (Copy-Paste from Excel. Ensure there are no special characters and no blanks.):",
+                    value = "", rows = 10, placeholder = "Paste your data here (tab-separated). E.g.,\nAssignment1\tAssignment2\n85\t90"),
+      
+      # Button to update grades table
+      actionButton("update_grades", "Update Grades Table"),
+      
+      hr(),
+      
+      # Input CLOs to assignments mapping (modified)
+      uiOutput("clo_assignment_mapping"),
+      
+      hr(),
+      
+      # Input max scores for each assignment column
+      uiOutput("assignment_max_scores"),
+      
+      # Button to update CLO mappings and max scores
+      actionButton("update_mapping_scores", "Update CLO Mapping and Max Scores"),
+      
+      hr(),
+      
+      # Download button for report
+      downloadButton("download_report", "Download Report"),
+      
+      hr(),
+      
+      actionButton("reset_all", "Reset All Data", class = "btn-danger") # Reset button
+    ),
+    
+    mainPanel(
+      width = 8,
+      # Display the list of CLOs and scores
+      h3("SLOs, CLOs, and Assignments"),
+      tableOutput("clo_table"),
+      
+      hr(),
+      
+      # Input fields for observations and recommendations
+      h3("Observations and Recommendations"),
+      textInput("instructor_name", "Instructor Name:", ""),
+      textInput("course_title", "Course Title:", ""),
+      selectInput("year", "Year:", choices = 2024:2030),
+      selectInput("term", "Term:", choices = c("Winter", "Spring", "Summer", "Fall")),
+      numericInput("num_students", "Number of Students in the Course:", value = 0, min = 0),
+      textAreaInput("clo_appropriate", "How well were the CLOs met? Give evidence. Do the CLOs require adjustment?", "", rows = 3),
+      textAreaInput("abet_slo_met", "How well were the ABET SLOs met? Give evidence.", "", rows = 3),
+      textAreaInput("improve_assessment", "Would you suggest improvements to any assessment instruments?", "", rows = 3),
+      textAreaInput("not_covered", "What was not covered from the syllabus?", "", rows = 3),
+      textAreaInput("better_textbook", "Would you suggest a better textbook?", "", rows = 3),
+      textAreaInput("improve_prerequisites", "Would you suggest improvements to the prerequisites?", "", rows = 3),
+      textAreaInput("general_comments", "Do you have any general comments in relation to this course?", "", rows = 3)
+    )
+  )
+)
+
+# Define server logic for the app
+server <- function(input, output, session) {
+  
+  # Reactive values to store CLOs and scores
+  values <- reactiveValues(
+    clo_list = data.frame(SLO = character(), CLO = character(), Assignment = character(), Score = numeric(), stringsAsFactors = FALSE),
+    grades_data = NULL, # Store the parsed grades data
+    assignment_cols = NULL, # Store the assignment column names
+    max_scores = NULL, # Store the maximum scores for each assignment
+    clo_mapping = NULL # Store the CLO mappings for each assignment
+  )
+  
+
+  
+  
+  
+  observeEvent(input$add_clo, {
+    req(input$clo, input$slo)  # Ensure inputs are not empty
+    
+    # Check if the CLO already exists in the list
+    if (!input$clo %in% values$clo_list$CLO) {
+      # Add the new CLO to the list
+      new_clo <- data.frame(SLO = input$slo, CLO = input$clo, Assignment = "", Score = NA, stringsAsFactors = FALSE)
+      values$clo_list <- rbind(values$clo_list, new_clo)
+      
+      # Initialize the mapping for the new CLO
+      values$clo_mapping[[input$clo]] <- NULL
+      
+      # Notify the user
+      showNotification("New CLO added successfully!", type = "message")
+    } else {
+      showNotification("CLO already exists!", type = "warning")
+    }
+    
+    # Clear the input field
+    updateTextAreaInput(session, "clo", value = "")
+  })
+  
+  
+  
+  
+  
+  output$clo_table <- renderTable({
+    if (nrow(values$clo_list) == 0) {
+      return(data.frame(Message = "No data available."))
+    }
+  
+  # 
+  # # Display the CLO table (simplified reactivity)
+  # output$clo_table <- renderTable({
+    req(values$clo_list) # Ensure clo_list has data
+    
+    # Calculate average score for each assignment on a 0-4 scale
+    assignment_summary <- values$clo_list %>%
+      group_by(SLO, CLO, Assignment) %>%
+      summarize(Average_Score = mean(Score, na.rm = TRUE), .groups = "drop") %>%
+      mutate(Average_Score_0_4 = round(Average_Score / 100 * 4, 2)) # Convert to 0-4 scale
+    
+    # Calculate average scores for CLOs (on 0-4 scale)
+    clo_summary <- assignment_summary %>%
+      group_by(SLO, CLO) %>% 
+      summarize(Average_CLO_Score_0_4 = round(mean(Average_Score_0_4, na.rm = TRUE),2), .groups = "drop")
+    
+    # Calculate average scores for SLOs (on 0-4 scale)
+    slo_summary <- clo_summary %>%
+      group_by(SLO) %>% 
+      summarize(Average_SLO_Score_0_4 = round(mean(Average_CLO_Score_0_4, na.rm = TRUE),2), .groups = "drop")
+    
+    # Prepare the final table 
+    final_table <- assignment_summary %>%
+      # select(SLO, CLO, Assignment, Average_Score_0_4) %>%
+      # arrange(SLO, CLO) %>%
+      mutate(Course_Code = input$course_code) %>% # Add course code column
+      left_join(clo_summary, by = c("SLO", "CLO")) %>%
+      left_join(slo_summary, by = "SLO") %>%
+      rename(Assignment_Average = Average_Score_0_4, 
+             CLO_Average = Average_CLO_Score_0_4,
+             SLO_Average = Average_SLO_Score_0_4) %>% 
+      select(Course_Code, SLO, CLO, Assignment, Assignment_Average, CLO_Average, SLO_Average) # Reorder columns
+    
+    
+    final_table
+  })
+  
+  
+  
+
+  output$clo_assignment_mapping <- renderUI({
+    req(values$clo_list$CLO, values$grades_data)
+    if (length(values$clo_list$CLO) == 0 || is.null(values$grades_data) || length(names(values$grades_data)) == 0) {
+      return(tags$p("No CLOs or grades data available to map assignments."))
+    }
+    ui_elements <- lapply(unique(values$clo_list$CLO), function(clo) {
+      selectizeInput(
+        inputId = paste0("assignment_for_", clo),
+        label = paste("Assignment(s) for", clo),
+        choices = names(values$grades_data),
+        selected = values$clo_mapping[[clo]],
+        multiple = TRUE
+      )
+    })
+    do.call(tagList, ui_elements)
+  })
+  
+  
+  
+  
+  
+  # Dynamic UI for assignment max scores
+  output$assignment_max_scores <- renderUI({
+    req(values$grades_data)
+    if (nrow(values$grades_data) == 0) {
+      return(tags$p("No grades data available."))
+    }
+    lapply(names(values$grades_data), function(assignment) {
+      max_grade <- max(values$grades_data[[assignment]], na.rm = TRUE)
+      numericInput(
+        inputId = paste0("max_score_", assignment),
+        label = paste("Max Score for", assignment),
+        value = max_grade
+      )
+    })
+  })
+  
+  
+  
+  
+  
+  
+  observeEvent(input$update_grades, {
+    req(input$grades_input)  # Ensure input is not empty
+    
+    # Check if grades input is tab-separated
+    if (!grepl("\t", input$grades_input)) {
+      showModal(modalDialog(
+        title = "Error",
+        "Grades input must be tab-separated. Please check your data.",
+        easyClose = TRUE
+      ))
+      return()
+    }
+    
+    tryCatch({
+      # Parse grades input
+      values$grades_data <- read.table(
+        text = input$grades_input,
+        header = TRUE,
+        sep = "\t",
+        stringsAsFactors = FALSE,
+        check.names = FALSE
+      )
+      
+      # Validate that grades_data is not empty
+      if (is.null(values$grades_data) || nrow(values$grades_data) == 0) {
+        stop("No data found after parsing. Please ensure input is correct.")
+      }
+      
+      # Notify the user
+      showNotification("Grades table updated successfully.", type = "message")
+    }, error = function(e) {
+      showModal(modalDialog(
+        title = "Error Parsing Grades",
+        paste("There was an error parsing the grades data:", e$message),
+        easyClose = TRUE
+      ))
+    })
+  })
+  
+  
+  
+  
+  
+
+  
+  observeEvent(input$update_mapping_scores, {
+    req(values$clo_list, nrow(values$clo_list) > 0)
+    
+    # Check if grades_data is valid
+    if (is.null(values$grades_data) || nrow(values$grades_data) == 0) {
+      showNotification("Grades data is missing or invalid. Please check your input.", type = "error")
+      return()
+    }
+    
+    # Initialize an empty clo_list
+    new_clo_list <- values$clo_list[0, ]
+    
+    # Process CLO mappings
+    clo_mappings <- sapply(values$clo_list$CLO, function(clo) {
+      assignments <- input[[paste0("assignment_for_", clo)]]
+      if (is.null(assignments)) {
+        return(character(0))  # Return an empty vector if no assignments selected
+      }
+      return(assignments)
+    }, simplify = FALSE)
+    
+    # Validate and process max_scores
+    values$max_scores <- sapply(names(values$grades_data), function(assignment) {
+      max_score <- input[[paste0("max_score_", assignment)]]
+      if (is.null(max_score) || !is.numeric(max_score) || is.na(max_score)) {
+        showNotification(paste("Max score missing or invalid for assignment:", assignment), type = "error")
+        return(NA)
+      }
+      return(max_score)
+    }, simplify = FALSE)
+    
+    # Check for any missing or invalid max_scores
+    if (any(is.na(unlist(values$max_scores)))) {
+      showNotification("Some max scores are missing or invalid. Please check your input.", type = "error")
+      return()
+    }
+    
+    # Iterate over CLOs and their associated assignments
+    for (i in seq_along(values$clo_list$CLO)) {
+      clo <- values$clo_list$CLO[i]
+      assignments <- clo_mappings[[clo]]
+      
+      # Ensure assignments are valid
+      if (length(assignments) > 0) {
+        for (assignment in assignments) {
+          if (!(assignment %in% names(values$grades_data))) {
+            showNotification(paste("Invalid assignment:", assignment), type = "error")
+            next
+          }
+          
+          # Get max_score for the current assignment
+          max_score <- values$max_scores[[assignment]]
+          if (is.null(max_score) || is.na(max_score)) {
+            showNotification(paste("Max score missing for assignment:", assignment), type = "error")
+            next
+          }
+          
+          # Add a new row to the CLO list
+          new_row <- data.frame(
+            SLO = values$clo_list$SLO[values$clo_list$CLO == clo][1],
+            CLO = clo,
+            Assignment = assignment,
+            Score = values$grades_data[[assignment]] / max_score * 100,
+            stringsAsFactors = FALSE
+          )
+          new_clo_list <- rbind(new_clo_list, new_row)
+        }
+      }
+    }
+    
+    # Update the reactive CLO list
+    values$clo_list <- new_clo_list
+    
+    # Notify the user of successful update
+    showNotification("Mapping and max scores updated successfully!", type = "message")
+  })
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  output$download_report <- downloadHandler(
+    filename = function() {
+      paste("course_assessment_report_", input$year, "_", input$term, "_", input$course_code, "_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      if (nrow(values$clo_list) == 0) {
+        write.csv(data.frame(Message = "No data available for the report."), file, row.names = FALSE)
+        return()
+      }
+      
+      # Prepare CLO/SLO data for download
+      assignment_summary <- values$clo_list %>%
+        group_by(SLO, CLO, Assignment) %>%
+        summarize(Average_Score = mean(Score, na.rm = TRUE), .groups = "drop") %>%
+        mutate(Average_Score_0_4 = round(Average_Score / 100 * 4, 2))  # Convert to 0-4 scale
+      
+      clo_summary <- assignment_summary %>%
+        group_by(SLO, CLO) %>%
+        summarize(CLO_Average = round(mean(Average_Score_0_4, na.rm = TRUE),2), .groups = "drop")
+      
+      slo_summary <- clo_summary %>%
+        group_by(SLO) %>%
+        summarize(SLO_Average = round(mean(CLO_Average, na.rm = TRUE),2), .groups = "drop")
+      
+      download_data <- assignment_summary %>%
+        left_join(clo_summary, by = c("SLO", "CLO")) %>%
+        left_join(slo_summary, by = "SLO") %>%
+        mutate(Course_Code = input$course_code) %>%
+        select(Course_Code, SLO, CLO, Assignment, Assignment_Average = Average_Score_0_4, CLO_Average, SLO_Average)
+      
+      # Prepare answers to questions with questions as column names
+      answers <- data.frame(
+        "Instructor Name" = input$instructor_name,
+        "Course Title" = input$course_title,
+        "Year" = input$year,
+        "Semester" = input$term,
+        "Number of Students" = input$num_students,
+        "Were the CLOs appropriate?" = input$clo_appropriate,
+        "What was not covered from the syllabus?" = input$not_covered,
+        "Would you suggest a better textbook?" = input$better_textbook,
+        "Would you suggest improvements to the assessment instruments?" = input$improve_assessment,
+        "Would you suggest improvements to the prerequisites?" = input$improve_prerequisites,
+        "How well were the ABET SLOs met?" = input$abet_slo_met,
+        "General Comments" = input$general_comments,
+        stringsAsFactors = FALSE
+      )
+      
+      # Replicate answers only once in the first row and fill blanks for others
+      answers_replicated <- as.data.frame(matrix("", nrow = nrow(download_data), ncol = ncol(answers)))
+      colnames(answers_replicated) <- colnames(answers)
+      answers_replicated[1, ] <- answers
+      
+      # Combine main data and answers
+      combined_data <- cbind(download_data, answers_replicated)
+      
+      # Write the combined data to the CSV file
+      write.csv(combined_data, file, row.names = FALSE, fileEncoding = "UTF-8")
+    }
+  )
+  
+  
+  
+  
+  
+  
+  
+  observeEvent(input$reset_all, {
+    values$clo_list <- data.frame(
+      SLO = character(),
+      CLO = character(),
+      Assignment = character(),
+      Score = numeric(),
+      stringsAsFactors = FALSE
+    )
+    values$grades_data <- NULL
+    values$assignment_cols <- NULL
+    values$max_scores <- NULL
+    values$clo_mapping <- NULL
+    
+    # Reset all inputs
+    updateTextAreaInput(session, "grades_input", value = "")
+    updateTextAreaInput(session, "clo", value = "")
+    updateNumericInput(session, "num_students", value = 0)
+    updateTextAreaInput(session, "clo_appropriate", value = "")
+    updateTextAreaInput(session, "abet_slo_met", value = "")
+    updateTextAreaInput(session, "improve_assessment", value = "")
+    updateTextAreaInput(session, "not_covered", value = "")
+    updateTextAreaInput(session, "better_textbook", value = "")
+    updateTextAreaInput(session, "improve_prerequisites", value = "")
+    updateTextAreaInput(session, "general_comments", value = "")
+    
+    showNotification("All data has been reset.", type = "message")
+  })
+  
+    
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+}
+
+# Run the app
+shinyApp(ui = ui, server = server)
